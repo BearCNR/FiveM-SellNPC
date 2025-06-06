@@ -6,14 +6,6 @@ Config.Inventory = 'ox_inventory' -- 'ox_inventory', 'esx_inventoryhud', 'qb-inv
 Config.Target = 'ox_target' -- 'ox_target', 'qb-target'
 Config.Debug = false
 
--- Token保护系统设置
-Config.TokenProtection = {
-    enabled = true, -- 启用Token保护
-    resourceName = 'BEAR_GOOD', -- Token系统资源名
-    autoRegister = true, -- 自动注册安全事件
-    securityLevel = 'HIGH' -- 安全级别: LOW, MEDIUM, HIGH, CRITICAL
-}
-
 -- 反作弊设置
 Config.AntiCheat = {
     enabled = true, -- 启用反作弊系统

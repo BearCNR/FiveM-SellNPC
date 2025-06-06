@@ -1,10 +1,9 @@
 local ESX, QBCore = nil, nil
 local Framework = nil
 
--- 框架检测和初始化
+-- 启动时检测使用的框架
 local function InitializeFramework()
     if Config.Framework == 'auto' then
-        -- 自动检测框架
         if GetResourceState('es_extended') == 'started' then
             Config.Framework = 'esx'
         elseif GetResourceState('qb-core') == 'started' then
@@ -136,12 +135,6 @@ function SendNotification(source, message, type)
         TriggerClientEvent('esx:showNotification', source, message)
     elseif Config.Framework == 'qb' then
         TriggerClientEvent('QBCore:Notify', source, message, type or 'primary', 5000)
-    else
-        TriggerClientEvent('chat:addMessage', source, {
-            color = {255, 255, 255},
-            multiline = true,
-            args = {"[系统]", message}
-        })
     end
 end
 
@@ -180,17 +173,16 @@ function LogTransaction(source, npcId, itemName, amount, totalPrice)
     TriggerEvent('Bear:SellNpc:TransactionLogged', logData)
 end
 
--- 反作弊系统数据
+-- 防作弊数据
 local AntiCheatData = {
     suspiciousPlayers = {},
     maxWarnings = Config.AntiCheat.maxWarnings or 3,
-    banDuration = 86400, -- 24小时
-    priceTolerancePercent = (Config.AntiCheat.priceTolerancePercent or 10) / 100 -- 转换为小数
+    banDuration = 86400,
+    priceTolerancePercent = (Config.AntiCheat.priceTolerancePercent or 10) / 100
 }
 
--- 反作弊 - 价格验证
+-- 检查价格是否被篡改
 function ValidatePrice(npcId, itemName, amount, claimedPrice)
-    -- 获取配置中的基础价格
     local basePrice = nil
     for _, npc in ipairs(Config.NPCs) do
         if npc.id == npcId then
@@ -208,14 +200,10 @@ function ValidatePrice(npcId, itemName, amount, claimedPrice)
         return false, 'CONFIG_PRICE_NOT_FOUND'
     end
     
-    -- 计算期望的总价格
     local expectedTotalPrice = basePrice * amount
-    
-    -- 允许的价格范围（考虑动态定价，最多70%到110%）
-    local minAllowedPrice = math.floor(expectedTotalPrice * 0.7)
+    local minAllowedPrice = math.floor(expectedTotalPrice * 0.9)
     local maxAllowedPrice = math.floor(expectedTotalPrice * 1.1)
     
-    -- 检查价格是否在合理范围内
     if claimedPrice < minAllowedPrice or claimedPrice > maxAllowedPrice then
         return false, 'PRICE_MANIPULATION', {
             expected = expectedTotalPrice,
@@ -228,12 +216,11 @@ function ValidatePrice(npcId, itemName, amount, claimedPrice)
     return true, 'PRICE_VALID'
 end
 
--- 反作弊 - 库存验证
+-- 检查背包物品数量
 function ValidateInventory(source, itemName, amount)
     local playerItems = GetPlayerItems(source)
     local playerItem = playerItems[itemName]
     
-    -- 验证玩家是否真的拥有这些物品
     if not playerItem then
         return false, 'ITEM_NOT_FOUND'
     end
@@ -248,7 +235,7 @@ function ValidateInventory(source, itemName, amount)
     return true, 'INVENTORY_VALID'
 end
 
--- 反作弊 - 记录可疑行为
+-- 记录可疑操作
 function RecordSuspiciousActivity(source, cheatType, details)
     local identifier = GetPlayerIdentifier(source)
     local playerName = GetPlayerName(source)
@@ -271,11 +258,9 @@ function RecordSuspiciousActivity(source, cheatType, details)
         timestamp = os.time()
     })
     
-    -- 记录到控制台
     print(string.format('[Bear_SellNpc] 🚨 反作弊警告: %s (%s) - %s | 警告次数: %d/%d', 
         playerName, identifier, cheatType, playerData.warnings, AntiCheatData.maxWarnings))
     
-    -- 触发管理员通知事件
     TriggerEvent('Bear:SellNpc:CheatDetected', {
         source = source,
         identifier = identifier,
@@ -288,7 +273,7 @@ function RecordSuspiciousActivity(source, cheatType, details)
     return playerData.warnings
 end
 
--- 反作弊 - 执行惩罚
+-- 执行作弊惩罚
 function ExecuteAntiCheatPunishment(source, cheatType, details)
     local xPlayer = GetPlayer(source)
     if not xPlayer then return end
@@ -296,7 +281,7 @@ function ExecuteAntiCheatPunishment(source, cheatType, details)
     local playerName = GetPlayerName(source)
     local identifier = GetPlayerIdentifier(source)
     
-    -- 清空玩家背包（逗逗你而已啦）
+    -- 清空背包
     if Config.Framework == 'esx' then
         local inventory = xPlayer.getInventory()
         for _, item in pairs(inventory) do
@@ -313,23 +298,18 @@ function ExecuteAntiCheatPunishment(source, cheatType, details)
         end
     end
     
-    -- 发送"友好"的消息
     SendNotification(source, '逗逗你而已啦😄', 'error')
     
-    -- 踢出玩家（可选）
     if Config.AntiCheat.punishmentActions.kickPlayer then
         DropPlayer(source, string.format('Bear反作弊系统: 检测到作弊行为 - %s', cheatType))
     end
     
-    -- 管理员日志
     print(string.format('[Bear_SellNpc] 🔨 执行反作弊惩罚: %s (%s) - %s', 
         playerName, identifier, cheatType))
     
-    -- 记录到作弊日志文件
     local logEntry = string.format('[%s] %s (%s) - %s - Details: %s\n', 
         os.date('%Y-%m-%d %H:%M:%S'), playerName, identifier, cheatType, json.encode(details))
     
-    -- 这里可以写入到文件系统或数据库
     TriggerEvent('Bear:SellNpc:CheatPunishmentExecuted', {
         source = source,
         identifier = identifier,
@@ -340,9 +320,8 @@ function ExecuteAntiCheatPunishment(source, cheatType, details)
     })
 end
 
--- 强化的交易验证系统
+-- 验证交易合法性
 function ValidateTransaction(source, npcId, itemName, amount, claimedPrice)
-    -- 基础验证
     local npcData = nil
     for _, npc in ipairs(Config.NPCs) do
         if npc.id == npcId then
@@ -356,12 +335,10 @@ function ValidateTransaction(source, npcId, itemName, amount, claimedPrice)
         return false, '无效的NPC'
     end
     
-    -- 检查权限
     if not HasPlayerPermission(source, Config.SellPermissions[npcId] or {}) then
         return false, Config.Lang.no_permission
     end
     
-    -- 检查物品是否在NPC的购买列表中
     local sellItem = nil
     for _, item in ipairs(npcData.items) do
         if item.name == itemName then
@@ -378,8 +355,7 @@ function ValidateTransaction(source, npcId, itemName, amount, claimedPrice)
         return false, '该商人不收购此物品'
     end
     
-    -- 验证数量
-    if not amount or amount <= 0 or amount > 999 then -- 限制最大数量防止溢出
+    if not amount or amount <= 0 or amount > 999 then
         RecordSuspiciousActivity(source, 'INVALID_AMOUNT', {
             itemName = itemName,
             amount = amount
@@ -387,9 +363,7 @@ function ValidateTransaction(source, npcId, itemName, amount, claimedPrice)
         return false, Config.Lang.invalid_amount
     end
     
-    -- 🔒 反作弊核心验证
-    
-    -- 1. 库存验证
+    -- 检查库存
     local inventoryValid, inventoryError, inventoryDetails = ValidateInventory(source, itemName, amount)
     if not inventoryValid then
         local warnings = RecordSuspiciousActivity(source, 'INVENTORY_CHEAT', {
@@ -407,7 +381,7 @@ function ValidateTransaction(source, npcId, itemName, amount, claimedPrice)
         return false, Config.Lang.not_enough_items
     end
     
-    -- 2. 价格验证（如果提供了声称的价格）
+    -- 检查价格
     if claimedPrice then
         local priceValid, priceError, priceDetails = ValidatePrice(npcId, itemName, amount, claimedPrice)
         if not priceValid then
@@ -420,10 +394,9 @@ function ValidateTransaction(source, npcId, itemName, amount, claimedPrice)
                 claimedPrice = claimedPrice
             })
             
-            -- 价格作弊立即执行惩罚
             if priceError == 'PRICE_MANIPULATION' then
                 ExecuteAntiCheatPunishment(source, 'PRICE_CHEAT', priceDetails)
-                return false, '检测到价格作弊，逗逗你而已啦！'
+                return false, '检测到价格作弊'
             end
         end
     end
@@ -431,7 +404,6 @@ function ValidateTransaction(source, npcId, itemName, amount, claimedPrice)
     return true, npcData, sellItem
 end
 
--- 网络事件处理
 RegisterNetEvent('Bear:SellNpc:GetPlayerItems', function(npcId)
     local source = source
     local playerItems = GetPlayerItems(source)
@@ -439,11 +411,9 @@ RegisterNetEvent('Bear:SellNpc:GetPlayerItems', function(npcId)
     TriggerClientEvent('Bear:SellNpc:ShowSellMenu', source, npcId, playerItems)
 end)
 
--- 注册为安全事件，替换原有的RegisterNetEvent  
-AddEventHandler("bear:safe:Bear:SellNpc:SellItem", function(source, npcId, itemName, amount, claimedTotalPrice)
-    -- Token系统已经验证，source参数已由Token系统传递
+RegisterNetEvent('Bear:SellNpc:SellItem', function(npcId, itemName, amount, claimedTotalPrice)
+    local source = source
     
-    -- 计算预期价格用于验证
     local expectedPrice = nil
     for _, npc in ipairs(Config.NPCs) do
         if npc.id == npcId then
@@ -457,7 +427,6 @@ AddEventHandler("bear:safe:Bear:SellNpc:SellItem", function(source, npcId, itemN
         end
     end
     
-    -- 强化验证交易（包含价格验证）
     local isValid, npcDataOrError, sellItem = ValidateTransaction(source, npcId, itemName, amount, claimedTotalPrice)
     
     if not isValid then
@@ -466,11 +435,9 @@ AddEventHandler("bear:safe:Bear:SellNpc:SellItem", function(source, npcId, itemN
     end
     
     local npcData = npcDataOrError
-    
-    -- 使用服务端计算的价格，不信任客户端
     local actualTotalPrice = sellItem.price * amount
     
-    -- 如果客户端声称的价格与服务端计算的差异过大，记录可疑行为
+    -- 价格差异检查
     if claimedTotalPrice and math.abs(claimedTotalPrice - actualTotalPrice) > (actualTotalPrice * 0.1) then
         RecordSuspiciousActivity(source, 'PRICE_DESYNC', {
             claimed = claimedTotalPrice,
@@ -481,16 +448,12 @@ AddEventHandler("bear:safe:Bear:SellNpc:SellItem", function(source, npcId, itemN
         })
     end
     
-    -- 执行交易
     if RemovePlayerItem(source, itemName, amount) then
         if AddPlayerMoney(source, actualTotalPrice) then
-            -- 交易成功
             SendNotification(source, string.format(Config.Lang.item_sold, sellItem.label, amount, actualTotalPrice), 'success')
             
-            -- 记录日志
             LogTransaction(source, npcId, itemName, amount, actualTotalPrice)
             
-            -- 触发交易成功事件
             TriggerEvent('Bear:SellNpc:ItemSold', {
                 source = source,
                 npcId = npcId,
@@ -499,7 +462,7 @@ AddEventHandler("bear:safe:Bear:SellNpc:SellItem", function(source, npcId, itemN
                 totalPrice = actualTotalPrice
             })
         else
-            -- 添加金钱失败，退还物品
+            -- 退还物品
             if Config.Framework == 'esx' then
                 local xPlayer = GetPlayer(source)
                 if xPlayer then
@@ -519,90 +482,7 @@ AddEventHandler("bear:safe:Bear:SellNpc:SellItem", function(source, npcId, itemN
     end
 end)
 
--- 获取交易统计（管理员命令）
-RegisterCommand('sellnpc_stats', function(source, args)
-    if source == 0 or HasPlayerPermission(source, {'admin'}) then
-        -- 这里可以实现统计功能
-        local message = '[Bear_SellNpc] 统计功能暂未实现'
-        if source == 0 then
-            print(message)
-        else
-            SendNotification(source, message, 'info')
-        end
-    end
-end, false)
 
--- 重新加载NPC配置（管理员命令）
-RegisterCommand('sellnpc_reload', function(source, args)
-    if source == 0 or HasPlayerPermission(source, {'admin'}) then
-        -- 通知所有客户端重新加载NPC
-        TriggerClientEvent('Bear:SellNpc:CleanupNPCs', -1)
-        Wait(1000)
-        TriggerClientEvent('Bear:SellNpc:InitializeNPCs', -1)
-        
-        local message = '[Bear_SellNpc] NPC配置已重新加载'
-        if source == 0 then
-            print(message)
-        else
-            SendNotification(source, message, 'success')
-        end
-    end
-end, false)
-
--- 查看反作弊数据（管理员命令）
-RegisterCommand('sellnpc_anticheat', function(source, args)
-    if source == 0 or HasPlayerPermission(source, {'admin'}) then
-        local suspiciousCount = 0
-        for identifier, data in pairs(AntiCheatData.suspiciousPlayers) do
-            suspiciousCount = suspiciousCount + 1
-        end
-        
-        local message = string.format('[Bear_SellNpc] 反作弊状态: %d 名可疑玩家', suspiciousCount)
-        if source == 0 then
-            print(message)
-            
-            -- 详细信息显示在控制台
-            for identifier, data in pairs(AntiCheatData.suspiciousPlayers) do
-                print(string.format('  玩家: %s | 警告: %d | 最后警告: %s', 
-                    identifier, data.warnings, os.date('%Y-%m-%d %H:%M:%S', data.lastWarning)))
-            end
-        else
-            SendNotification(source, message, 'info')
-        end
-    end
-end, false)
-
--- 清除玩家反作弊记录（管理员命令）
-RegisterCommand('sellnpc_clear_warnings', function(source, args)
-    if source == 0 or HasPlayerPermission(source, {'admin'}) then
-        if args[1] then
-            local targetIdentifier = args[1]
-            if AntiCheatData.suspiciousPlayers[targetIdentifier] then
-                AntiCheatData.suspiciousPlayers[targetIdentifier] = nil
-                local message = string.format('[Bear_SellNpc] 已清除玩家 %s 的反作弊记录', targetIdentifier)
-                if source == 0 then
-                    print(message)
-                else
-                    SendNotification(source, message, 'success')
-                end
-            else
-                local message = '[Bear_SellNpc] 未找到该玩家的反作弊记录'
-                if source == 0 then
-                    print(message)
-                else
-                    SendNotification(source, message, 'error')
-                end
-            end
-        else
-            local message = '[Bear_SellNpc] 用法: /sellnpc_clear_warnings <玩家标识符>'
-            if source == 0 then
-                print(message)
-            else
-                SendNotification(source, message, 'info')
-            end
-        end
-    end
-end, false)
 
 -- 资源启动
 CreateThread(function()
@@ -610,30 +490,8 @@ CreateThread(function()
         return
     end
     
-    -- 等待Token系统初始化
-    while GetResourceState('BEAR_GOOD') ~= 'started' do
-        print('[Bear_SellNpc] 等待Token保护系统 (BEAR_GOOD) 启动...')
-        Wait(1000)
-    end
-    
-    -- 注册安全事件到Token系统
-    Wait(2000) -- 确保Token系统完全加载
-    
-    local success, message = exports["BEAR_GOOD"]:RegisterSafeEvent('Bear:SellNpc:SellItem', {
-        ban = true,   -- 启用自动封禁
-        log = true    -- 记录所有调用
-    }, false)         -- 禁止外部资源调用
-    
-    if success then
-        print('[Bear_SellNpc] ✅ Token保护已启用: Bear:SellNpc:SellItem')
-    else
-        print('[Bear_SellNpc] ❌ Token保护注册失败: ' .. tostring(message))
-    end
-    
-    print('[Bear_SellNpc] 服务端初始化完成')
     print(string.format('[Bear_SellNpc] 框架: %s', Config.Framework))
     print(string.format('[Bear_SellNpc] 已加载 %d 个NPC配置', #Config.NPCs))
-    print('[Bear_SellNpc] 🛡️ Token安全保护已激活')
 end)
 
 -- 导出函数
